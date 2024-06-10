@@ -1,6 +1,9 @@
 import os
 import pickle
 from typing import Union, Tuple
+import json
+import sklearn
+import numpy as np
 
 import joblib
 
@@ -20,6 +23,8 @@ class ModelsSerializer:
 
     @staticmethod
     def choose_serialization(model) -> Tuple[str, Union[Exception, int]]:
+        if "LogisticRegression" in str(type(model)):
+            return "logistic_regression", 1
         try:
             ex_b = pickle.dumps(model, protocol=4)
             model_ser = ex_b.decode("latin1").replace("'", '"')
@@ -68,6 +73,8 @@ class ModelsSerializer:
         if serialization == "pickle":
             ex_b = pickle.dumps(model, protocol=4)
             model_ser = ex_b.decode("latin1")
+        elif serialization == "logistic_regression":
+            model_ser = self.serialize_logistic_regression(model)
         elif serialization == "joblib":
             path = self.get_path_joblib(
                 models_dir=self.models_dir, node_name=node_name.replace(" ", "_")
@@ -107,6 +114,14 @@ class ModelsSerializer:
                 result[node_name] = instance_serialized
         return result
 
+    def serialize_logistic_regression(self, instance):
+        data = {}
+        data["init_params"] = instance.get_params()
+        data["model_params"] = mp = {}
+        for p in ("coef_", "intercept_", "classes_", "n_iter_"):
+            mp[p] = getattr(instance, p).tolist()
+        return json.dumps(data)
+
 
 class Deserializer:
     def __init__(self, models_dir):
@@ -123,10 +138,20 @@ class Deserializer:
         if serialization == "pickle":
             bytes_model = model_repr.encode("latin1")
             model = pickle.loads(bytes_model)
+        elif serialization == "logistic_regression":
+            model = Deserializer.deserialize_logistic_regression(model_repr)
         else:
             model = joblib.load(model_repr)
 
         instance[f"{model_type}_obj"] = model
+        return instance
+
+    @staticmethod
+    def deserialize_logistic_regression(data_str):
+        data = json.loads(data_str)
+        instance = sklearn.linear_model.LogisticRegression(**data["init_params"])
+        for name, p in data["model_params"].items():
+            setattr(instance, name, np.array(p))
         return instance
 
     def apply(self, distributions):
